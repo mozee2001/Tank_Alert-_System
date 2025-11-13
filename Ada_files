@@ -1,0 +1,148 @@
+#include <WiFiS3.h>
+#include <SD.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH  128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+/* ----------  NETWORK / SERVER DETAILS  ----------------- */
+const char* ssid      = "Flostar";
+const char* password  = "Welcom@2021$";
+const char* serverIP  = "192.168.4.219";   // PC running PHP
+const uint16_t serverPort = 80;            // HTTP port
+const char* phpFile = "/tank_alert1.php";  // your PHP file
+
+/* ----------  HARDWARE PINS  ---------------------------- */
+const int sensorPin = 6;
+const int buzzerPin = 7;
+
+/* ----------  GLOBALS  --------------------------------- */
+int lastSensorValue = -1;   // previous tank state
+String lastLoggedTime = ""; // last logged time from PHP
+
+/* ------------------------------------------------------ */
+void setup() {
+  Serial.begin(115200);
+  pinMode(sensorPin, INPUT);
+  pinMode(buzzerPin, OUTPUT);
+
+  // Initialize OLED
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for (;;);
+  }
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println(F("Connecting WiFi..."));
+  display.display();
+
+  // Connect WiFi
+  Serial.print(F("Connecting to "));
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print('.');
+  }
+  Serial.print(F("\nWiFi connected. IP: "));
+  Serial.println(WiFi.localIP());
+
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println(F("WiFi Connected!"));
+  display.println(WiFi.localIP());
+  display.display();
+
+  // Initialize SD card
+  if (!SD.begin()) {
+    Serial.println(F("SD init failed – local log disabled"));
+  } else {
+    Serial.println(F("SD ready – local log enabled"));
+  }
+}
+
+/* ------------------------------------------------------ */
+void loop() {
+  int sensorValue = digitalRead(sensorPin);
+  String status = (sensorValue == HIGH) ? "Closed" : "Opened";
+
+  // Only act if tank state changes
+  if (sensorValue != lastSensorValue) {
+    lastSensorValue = sensorValue;
+
+    // Update OLED and buzzer
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setCursor(0, 0);
+    display.print(F("Tank 1: "));
+    display.println(status);
+
+    digitalWrite(buzzerPin, (sensorValue == LOW) ? LOW : HIGH); // buzzer ON if tank OPEN
+
+    // Get current time from WiFi
+    unsigned long epochTime = WiFi.getTime();
+    String timeStr = String(epochTime);
+
+    // Write to local SD
+    if (SD.begin()) {
+      File f = SD.open("/call_log.txt", FILE_WRITE);
+      if (f) {
+        f.println(timeStr + "," + status);
+        f.close();
+      }
+    }
+
+    // Send POST to PHP
+    if (WiFi.status() == WL_CONNECTED) {
+      WiFiClient client;
+      if (client.connect(serverIP, serverPort)) {
+        String postBody = "status=" + status + "&time=" + timeStr;
+        String request = "POST " + String(phpFile) + " HTTP/1.1\r\n"
+                         "Host: " + String(serverIP) + "\r\n"
+                         "Content-Type: application/x-www-form-urlencoded\r\n"
+                         "Content-Length: " + String(postBody.length()) + "\r\n"
+                         "Connection: close\r\n\r\n" + postBody;
+
+        client.print(request);
+
+        // Read response from PHP
+        String response;
+        while (client.connected() || client.available()) {
+          if (client.available()) {
+            char c = client.read();
+            response += c;
+          }
+        }
+        client.stop();
+
+        // Parse response for last logged time (assuming PHP prints it)
+        int bodyStart = response.indexOf("\r\n\r\n");
+        if (bodyStart != -1) {
+          lastLoggedTime = response.substring(bodyStart + 4);
+        }
+
+      } else {
+        Serial.println(F("PHP POST error: could not connect"));
+      }
+    }
+
+    // Display last logged time
+    display.setTextSize(1);
+    display.setCursor(0, 40);
+    display.print(F("Last Logged:"));
+    display.setCursor(0, 50);
+    display.println(lastLoggedTime);
+    display.display();
+
+    Serial.print(F("Tank status updated: "));
+    Serial.println(status);
+  }
+
+  delay(100); // debounce
+}
