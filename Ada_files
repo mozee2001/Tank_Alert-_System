@@ -10,9 +10,9 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 /* ----------  NETWORK / SERVER DETAILS  ----------------- */
-const char* ssid      = "Flostar";
-const char* password  = "Welcom@2021$";
-const char* serverIP  = "192.168.4.219";   // PC running PHP
+const char* ssid      = "";
+const char* password  = "";
+const char* serverIP  = "";   // PC running PHP
 const uint16_t serverPort = 80;            // HTTP port
 const char* phpFile = "/tank_alert1.php";  // your PHP file
 
